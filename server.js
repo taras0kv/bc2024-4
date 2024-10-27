@@ -1,8 +1,9 @@
 const http = require('http')
 const { Command } = require('commander')
+const fs = require('fs').promises
+const path = require('path')
 const program = new Command()
 
-// Налаштування параметрів командного рядка
 program
 	.requiredOption('-h, --host <host>', 'Адреса сервера')
 	.requiredOption('-p, --port <port>', 'Порт сервера', parseInt)
@@ -10,22 +11,65 @@ program
 
 program.parse(process.argv)
 
-// Отримання параметрів
 const { host, port, cache } = program.opts()
 
-// Перевірка параметрів
-if (!host || !port || !cache) {
-	console.error('Всі параметри є обовʼязковими: --host, --port, --cache')
-	process.exit(1)
-}
+const server = http.createServer(async (req, res) => {
+	const httpCode = path.basename(req.url)
 
-// Створення веб-сервера
-const server = http.createServer((req, res) => {
-	res.writeHead(200, { 'Content-Type': 'text/plain' })
-	res.end('Проксі-сервер.\n')
+	// Перевірка формату запиту
+	if (!/^\d{3}$/.test(httpCode)) {
+		res.writeHead(400, { 'Content-Type': 'text/plain' })
+		return res.end('Bad Request')
+	}
+
+	const cachePath = path.join(cache, `${httpCode}.jpg`)
+
+	switch (req.method) {
+		case 'GET':
+			try {
+				const data = await fs.readFile(cachePath)
+				res.writeHead(200, { 'Content-Type': 'image/jpeg' })
+				res.end(data)
+			} catch (err) {
+				res.writeHead(404, { 'Content-Type': 'text/plain' })
+				res.end('Not Found')
+			}
+			break
+
+		case 'PUT':
+			try {
+				const chunks = []
+				req.on('data', chunk => chunks.push(chunk))
+				req.on('end', async () => {
+					const data = Buffer.concat(chunks)
+					await fs.writeFile(cachePath, data)
+					res.writeHead(201, { 'Content-Type': 'text/plain' })
+					res.end('Created')
+				})
+			} catch (err) {
+				res.writeHead(500, { 'Content-Type': 'text/plain' })
+				res.end('Internal Server Error')
+			}
+			break
+
+		case 'DELETE':
+			try {
+				await fs.unlink(cachePath)
+				res.writeHead(200, { 'Content-Type': 'text/plain' })
+				res.end('Deleted')
+			} catch (err) {
+				res.writeHead(404, { 'Content-Type': 'text/plain' })
+				res.end('Not Found')
+			}
+			break
+
+		default:
+			res.writeHead(405, { 'Content-Type': 'text/plain' })
+			res.end('Method Not Allowed')
+			break
+	}
 })
 
-// Запуск сервера
 server.listen(port, host, () => {
 	console.log(`Сервер запущено на http://${host}:${port}`)
 })
