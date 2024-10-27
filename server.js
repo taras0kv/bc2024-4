@@ -2,6 +2,7 @@ const http = require('http')
 const { Command } = require('commander')
 const fs = require('fs').promises
 const path = require('path')
+const superagent = require('superagent')
 const program = new Command()
 
 program
@@ -16,7 +17,7 @@ const { host, port, cache } = program.opts()
 const server = http.createServer(async (req, res) => {
 	const httpCode = path.basename(req.url)
 
-	// Перевірка формату запиту
+	// Перевірка на валідний код
 	if (!/^\d{3}$/.test(httpCode)) {
 		res.writeHead(400, { 'Content-Type': 'text/plain' })
 		return res.end('Bad Request')
@@ -31,8 +32,18 @@ const server = http.createServer(async (req, res) => {
 				res.writeHead(200, { 'Content-Type': 'image/jpeg' })
 				res.end(data)
 			} catch (err) {
-				res.writeHead(404, { 'Content-Type': 'text/plain' })
-				res.end('Not Found')
+				try {
+					// Завантаження зображення з http.cat у разі відсутності в кеші
+					const response = await superagent.get(`https://http.cat/${httpCode}`)
+					const imageData = response.body
+
+					await fs.writeFile(cachePath, imageData) // Зберігаємо в кеші
+					res.writeHead(200, { 'Content-Type': 'image/jpeg' })
+					res.end(imageData)
+				} catch (error) {
+					res.writeHead(404, { 'Content-Type': 'text/plain' })
+					res.end('Not Found')
+				}
 			}
 			break
 
