@@ -1,23 +1,21 @@
 {
   "name": "lab_4",
   "version": "1.0.0",
-  "main": "index.js",
+  "main": "server.js",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
-    "start": "node server.js",
-    "dev": "nodemon server.js -- -h <ваш_хост> -p <ваш_порт> -c <шлях_до_кешу>"
+    "start": "nodemon server.js"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
-  "description": "",
   "dependencies": {
     "commander": "^12.1.0",
+    "image-type": "^5.2.0",
     "superagent": "^10.1.1"
   },
   "devDependencies": {
     "nodemon": "^3.1.7"
-  }
-
-
+  },
+  "description": ""
 }

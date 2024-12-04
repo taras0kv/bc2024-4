@@ -1,76 +1,102 @@
 const http = require('http')
-const { Command } = require('commander')
 const fs = require('fs').promises
 const path = require('path')
 const superagent = require('superagent')
+const { Command } = require('commander')
+
 const program = new Command()
 
 program
-	.requiredOption('-h, --host <host>', 'Адреса сервера')
-	.requiredOption('-p, --port <port>', 'Порт сервера', parseInt)
-	.requiredOption('-c, --cache <path>', 'Шлях до директорії кешу')
+	.requiredOption('-h, --host <type>', 'Server host address')
+	.requiredOption('-p, --port <number>', 'Server port')
+	.requiredOption('-c, --cache <path>', 'Cache directory path')
 
 program.parse(process.argv)
 
-const { host, port, cache } = program.opts()
+const options = program.opts()
 
+// Директорія кешу
+const cacheDirectory = path.resolve(options.cache)
+
+// Перевіряємо наявність директорії кешу
+fs.mkdir(cacheDirectory, { recursive: true })
+	.then(() => {
+		console.log('Кеш директорія створена або вже існує.')
+	})
+	.catch(err => {
+		console.error('Помилка при створенні директорії кешу:', err)
+	})
+
+// Створюємо сервер
 const server = http.createServer(async (req, res) => {
-	const httpCode = path.basename(req.url)
+	const statusCode = req.url?.substring(1) // Отримуємо код статусу з URL
 
-	// Перевірка на валідний код
-	if (!/^\d{3}$/.test(httpCode)) {
+	if (!statusCode) {
 		res.writeHead(400, { 'Content-Type': 'text/plain' })
-		return res.end('Bad Request')
+		return res.end('Bad Request: Status code is required.')
 	}
 
-	const cachePath = path.join(cache, `${httpCode}.jpg`)
+	const cacheFilePath = path.join(cacheDirectory, `${statusCode}.jpg`)
 
 	switch (req.method) {
 		case 'GET':
 			try {
-				const data = await fs.readFile(cachePath)
+				// Спробуємо зчитати зображення з кешу
+				const imageData = await fs.readFile(cacheFilePath)
 				res.writeHead(200, { 'Content-Type': 'image/jpeg' })
-				res.end(data)
+				res.end(imageData)
 			} catch (err) {
-				try {
-					// Завантаження зображення з http.cat у разі відсутності в кеші
-					const response = await superagent.get(`https://http.cat/${httpCode}`)
-					const imageData = response.body
-
-					await fs.writeFile(cachePath, imageData) // Зберігаємо в кеші
-					res.writeHead(200, { 'Content-Type': 'image/jpeg' })
-					res.end(imageData)
-				} catch (error) {
-					res.writeHead(404, { 'Content-Type': 'text/plain' })
-					res.end('Not Found')
+				if (err.code === 'ENOENT') {
+					// Якщо зображення не знайдено в кеші, отримуємо його з http.cat
+					try {
+						const response = await superagent.get(
+							`https://http.cat/${statusCode}`
+						)
+						await fs.writeFile(cacheFilePath, response.body) // Записуємо у кеш
+						res.writeHead(200, { 'Content-Type': 'image/jpeg' })
+						res.end(response.body)
+					} catch (error) {
+						res.writeHead(404, { 'Content-Type': 'text/plain' })
+						res.end('Not Found: Unable to retrieve image from http.cat.')
+					}
+				} else {
+					res.writeHead(500, { 'Content-Type': 'text/plain' })
+					res.end('Internal Server Error: Unable to read from cache.')
 				}
 			}
 			break
 
 		case 'PUT':
-			try {
-				const chunks = []
-				req.on('data', chunk => chunks.push(chunk))
-				req.on('end', async () => {
-					const data = Buffer.concat(chunks)
-					await fs.writeFile(cachePath, data)
-					res.writeHead(201, { 'Content-Type': 'text/plain' })
-					res.end('Created')
+			let body = []
+			req
+				.on('data', chunk => {
+					body.push(chunk)
 				})
-			} catch (err) {
-				res.writeHead(500, { 'Content-Type': 'text/plain' })
-				res.end('Internal Server Error')
-			}
+				.on('end', async () => {
+					try {
+						await fs.writeFile(cacheFilePath, Buffer.concat(body)) // Записуємо зображення у кеш
+						res.writeHead(201, { 'Content-Type': 'text/plain' })
+						res.end('Created: Image cached successfully.')
+					} catch (err) {
+						res.writeHead(500, { 'Content-Type': 'text/plain' })
+						res.end('Internal Server Error: Unable to write to cache.')
+					}
+				})
 			break
 
 		case 'DELETE':
 			try {
-				await fs.unlink(cachePath)
+				await fs.unlink(cacheFilePath) // Видаляємо зображення з кешу
 				res.writeHead(200, { 'Content-Type': 'text/plain' })
-				res.end('Deleted')
+				res.end('OK: Image deleted from cache.')
 			} catch (err) {
-				res.writeHead(404, { 'Content-Type': 'text/plain' })
-				res.end('Not Found')
+				if (err.code === 'ENOENT') {
+					res.writeHead(404, { 'Content-Type': 'text/plain' })
+					res.end('Not Found: Image not found in cache.')
+				} else {
+					res.writeHead(500, { 'Content-Type': 'text/plain' })
+					res.end('Internal Server Error: Unable to delete from cache.')
+				}
 			}
 			break
 
@@ -81,6 +107,7 @@ const server = http.createServer(async (req, res) => {
 	}
 })
 
-server.listen(port, host, () => {
-	console.log(`Сервер запущено на http://${host}:${port}`)
+// Запускаємо сервер
+server.listen(options.port, options.host, () => {
+	console.log(`Сервер запущено на http://${options.host}:${options.port}`)
 })
